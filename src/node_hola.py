@@ -11,8 +11,8 @@
 :Created:
     7/6/18
 """
+import logging
 import sys
-import types
 
 from bs4 import BeautifulSoup
 import daiquiri
@@ -20,24 +20,20 @@ from docopt import docopt
 from lxml import etree
 import requests
 
+
+daiquiri.setup(
+    level=logging.ERROR,
+    outputs=(
+        daiquiri.output.File('errors.log', level=logging.ERROR),
+    )
+)
+
 logger = daiquiri.getLogger('node_hola: ' + __name__)
-
-
-PRODUCTION = 'cn.dataone.org'
-STAGING = 'cn-stage.test.dataone.org'
-DEVELOPMENT = 'cn-dev.test.dataone.org'
 
 
 def gmn_version(home_html: str):
     gmn_version = 'Unknown'
     parser = 'lxml'
-    # et = etree.fromstring(home_html.encode('utf-8'))
-    # table_rows = et.findall('tr')
-    # for table_row in table_rows:
-    #     table_data = table_row.getchildren()
-    #     if table_data[0].text == 'GMN version:':
-    #         gmn_version = table_data[1]
-    #         break
     # BeautifulSoup required due to non-valid xhtml (it's xml lenient)
     soup = BeautifulSoup(home_html, parser)
     table_rows = soup.find_all('tr')
@@ -49,33 +45,29 @@ def gmn_version(home_html: str):
 
 
 def metacat_version(version_xml: str):
-    metacat_version = 'Unknown'
     et = etree.fromstring(version_xml.encode('utf-8'))
-    metacat_version = et.text
-    return metacat_version
+    return et.text
+
 
 def mn_poke(identifier: str, base_url: str):
-    mn_type = 'Unknown'
-    mn_version = 'Unknown'
-    try:
-        # Try as GMN
-        gmn_url = base_url + '/home'
-        r = requests.get(gmn_url)
+    mn_type = 'unknown'
+    mn_version = 'unknown'
+    # Try as GMN
+    gmn_url = base_url + '/home'
+    r = requests.get(gmn_url)
+    if r.status_code == requests.codes.OK:
+        mn_type = 'GMN'
+        mn_version = gmn_version(home_html=r.text)
+        return mn_type, mn_version
+    # Try as Metacat
+    if '/d1/mn' in base_url: # Likely Metacat
+        metacat_version_url = base_url.strip('/d1/mn') + \
+                              '/metacat?action=getversion'
+        r = requests.get(metacat_version_url)
         if r.status_code == requests.codes.OK:
-            mn_type = 'GMN'
-            mn_version = gmn_version(home_html=r.text)
+            mn_type = 'Metacat'
+            mn_version = metacat_version(version_xml=r.text)
             return mn_type, mn_version
-        # Try as Metacat
-        if '/d1/mn' in base_url: # Likely Metacat
-            metacat_version_url = base_url.strip('/d1/mn') + \
-                                  '/metacat?action=getversion'
-            r = requests.get(metacat_version_url)
-            if r.status_code == requests.codes.OK:
-                mn_type = 'Metacat'
-                mn_version = metacat_version(version_xml=r.text)
-                return mn_type, mn_version
-    except Exception as e:
-        logger.error(e)
     return mn_type, mn_version
 
 
@@ -94,18 +86,17 @@ def node_list(domain: str):
                 nl[children[0].text] = children[3].text
     except Exception as e:
         logger.error(e)
-        nl = None
     return nl
 
 
 def valid_domain(domain: str) -> bool:
     url = 'https://' + domain + '/cn/v2'
-    valid = True
+    valid = False
     try:
         r  = requests.get(url=url)
+        valid = True
     except Exception as e:
         logger.error(e)
-        valid = False
     return valid
 
 
@@ -133,11 +124,21 @@ def main(argv):
         logger.error(msg)
         return 1
 
+    print('node_identifier, base_url, mn_type, mn_version, mn_status')
+
     nl = node_list(domain)
     for mn_id in nl:
+        mn_type = 'unknown'
+        mn_version = 'unknown'
         base_url = nl[mn_id]
-        mn_type, mn_version = mn_poke(identifier=mn_id, base_url=base_url)
-        print(f'{mn_id}, {base_url}, {mn_type}, {mn_version}')
+        try:
+            mn_type, mn_version = mn_poke(identifier=mn_id, base_url=base_url)
+            mn_status = 'up'
+        except Exception as e:
+            logger.error(e)
+            mn_status = 'down'
+        print(f'{mn_id}, {base_url}, {mn_type}, {mn_version}, {mn_status}')
+
     return 0
 
 
