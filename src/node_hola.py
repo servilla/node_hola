@@ -14,6 +14,7 @@
 import sys
 import types
 
+from bs4 import BeautifulSoup
 import daiquiri
 from docopt import docopt
 from lxml import etree
@@ -27,15 +28,55 @@ STAGING = 'cn-stage.test.dataone.org'
 DEVELOPMENT = 'cn-dev.test.dataone.org'
 
 
-def valid_domain(domain: str) -> bool:
-    url = 'https://' + domain + '/cn/v2'
-    valid = True
+def gmn_version(home_html: str):
+    gmn_version = 'Unknown'
+    parser = 'lxml'
+    # et = etree.fromstring(home_html.encode('utf-8'))
+    # table_rows = et.findall('tr')
+    # for table_row in table_rows:
+    #     table_data = table_row.getchildren()
+    #     if table_data[0].text == 'GMN version:':
+    #         gmn_version = table_data[1]
+    #         break
+    # BeautifulSoup required due to non-valid xhtml (it's xml lenient)
+    soup = BeautifulSoup(home_html, parser)
+    table_rows = soup.find_all('tr')
+    for table_row in table_rows:
+        table_data = table_row.find_all('td')
+        if table_data[0].string == 'GMN version:':
+            gmn_version = table_data[1].string
+    return gmn_version
+
+
+def metacat_version(version_xml: str):
+    metacat_version = 'Unknown'
+    et = etree.fromstring(version_xml.encode('utf-8'))
+    metacat_version = et.text
+    return metacat_version
+
+def mn_poke(identifier: str, base_url: str):
+    mn_type = 'Unknown'
+    mn_version = 'Unknown'
     try:
-        r  = requests.get(url=url)
+        # Try as GMN
+        gmn_url = base_url + '/home'
+        r = requests.get(gmn_url)
+        if r.status_code == requests.codes.OK:
+            mn_type = 'GMN'
+            mn_version = gmn_version(home_html=r.text)
+            return mn_type, mn_version
+        # Try as Metacat
+        if '/d1/mn' in base_url: # Likely Metacat
+            metacat_version_url = base_url.strip('/d1/mn') + \
+                                  '/metacat?action=getversion'
+            r = requests.get(metacat_version_url)
+            if r.status_code == requests.codes.OK:
+                mn_type = 'Metacat'
+                mn_version = metacat_version(version_xml=r.text)
+                return mn_type, mn_version
     except Exception as e:
         logger.error(e)
-        valid = False
-    return valid
+    return mn_type, mn_version
 
 
 def node_list(domain: str):
@@ -57,14 +98,15 @@ def node_list(domain: str):
     return nl
 
 
-def mn_poke(identifier: str, base_url: str):
-    gmn= base_url + '/home'
+def valid_domain(domain: str) -> bool:
+    url = 'https://' + domain + '/cn/v2'
+    valid = True
     try:
-        r = requests.get(gmn)
-        if r.status_code == requests.codes.OK:
-            print(f'{identifier} is a GMN member node')
+        r  = requests.get(url=url)
     except Exception as e:
         logger.error(e)
+        valid = False
+    return valid
 
 
 def main(argv):
@@ -92,9 +134,10 @@ def main(argv):
         return 1
 
     nl = node_list(domain)
-    for mn in nl:
-        mn_poke(mn, nl[mn])
-
+    for mn_id in nl:
+        base_url = nl[mn_id]
+        mn_type, mn_version = mn_poke(identifier=mn_id, base_url=base_url)
+        print(f'{mn_id}, {base_url}, {mn_type}, {mn_version}')
     return 0
 
 
