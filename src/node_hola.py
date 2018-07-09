@@ -68,8 +68,22 @@ def mn_poke(identifier: str, base_url: str):
             mn_type = 'Metacat'
             mn_version = metacat_version(version_xml=r.text)
             return mn_type, mn_version
-    return mn_type, mn_version
-
+    # Try for v1 life
+    r = requests.get(base_url + '/v1')
+    if r.status_code == requests.codes.OK:
+        return mn_type, mn_version
+    else:
+        msg = f'Received {r.status_code} response code from {identifier} for "/v1" test'
+        logger.error(msg)
+    # Try for v2 life
+    r = requests.get(base_url + '/v2')
+    if r.status_code == requests.codes.OK:
+        return mn_type, mn_version
+    else:
+        msg = f'Received {r.status_code} response code from {identifier} for "/v2" test'
+        logger.error(msg)
+        msg = f'No acceptable response from {identifier}'
+        raise Exception(msg)
 
 def node_list(domain: str):
     url = 'https://' + domain + '/cn/v2/node'
@@ -89,7 +103,7 @@ def node_list(domain: str):
     return nl
 
 
-def valid_domain(domain: str) -> bool:
+def valid_cn_domain(domain: str) -> bool:
     url = 'https://' + domain + '/cn/v2'
     valid = False
     try:
@@ -119,7 +133,7 @@ def main(argv):
     args = docopt(str(main.__doc__))
     domain = args['<domain>']
 
-    if not valid_domain(domain):
+    if not valid_cn_domain(domain):
         msg = f'Domain "{domain}" not valid DataONE CN operating domain'
         logger.error(msg)
         return 1
